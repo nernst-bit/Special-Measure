@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wanglab-qswitch-gui"
+version = "0.1.0"
+description = "Standalone USB controller for the Quantum Machines / QDevil QSwitch"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.7,<7",
+    "pyserial>=3.5,<4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+qswitch-gui = "qswitch_gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["qswitch_gui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
