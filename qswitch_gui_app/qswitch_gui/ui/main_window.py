@@ -44,6 +44,10 @@ class MainWindow(QMainWindow):
         self._busy = False
         self.thread_pool = QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
+        # Keep signal objects alive until their queued GUI callbacks have run.
+        # QRunnable auto-deletion otherwise permits QObject cleanup on the pool
+        # thread, which is unsafe for PySide6 on some native Qt platforms.
+        self._workers: set[Worker] = set()
         self.setWindowTitle("Wang Lab QSwitch Controller" + (" — SIMULATED DEVICE" if demo else ""))
         self.resize(1120, 820)
         self.setMinimumSize(900, 650)
@@ -311,9 +315,18 @@ class MainWindow(QMainWindow):
 
     def _run(self, function, success, failure) -> None:
         worker = Worker(function)
+        worker.setAutoDelete(False)
         worker.signals.succeeded.connect(success)
         worker.signals.failed.connect(failure)
+        worker.signals.finished.connect(partial(self._worker_finished, worker))
+        self._workers.add(worker)
         self.thread_pool.start(worker)
+
+    def _worker_finished(self, worker: Worker) -> None:
+        # This slot is queued to the GUI thread. Release the runnable and its
+        # GUI-affine signal object only after success/failure callbacks finish.
+        self._workers.discard(worker)
+        worker.signals.deleteLater()
 
     def _operation_failed(self, title: str, exc: Exception) -> None:
         known_state = self.device.confirmed_state if self.device is not None else None

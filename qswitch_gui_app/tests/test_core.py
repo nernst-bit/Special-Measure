@@ -53,6 +53,21 @@ class StateParserTests(unittest.TestCase):
         ]
         self.assertEqual(state.closed, frozenset(expected))
 
+    def test_physical_multi_route_state_response(self):
+        response = "(@1!0:24!0,1!9,9!2,6!4,11!6,8!7,14!7)"
+        state = parse_channel_list(response)
+        expected = {
+            *(RelayAddress(signal, 0) for signal in range(1, 25)),
+            RelayAddress(1, 9),
+            RelayAddress(9, 2),
+            RelayAddress(6, 4),
+            RelayAddress(11, 6),
+            RelayAddress(8, 7),
+            RelayAddress(14, 7),
+        }
+        self.assertEqual(state.closed, frozenset(expected))
+        self.assertEqual(state.breakout_count, 5)
+
     def test_rejects_malformed_or_unsafe_responses(self):
         responses = (
             "1!0", "()", "(@1!0:2!1)", "(@24!0:1!0)", "(@25!0)",
@@ -170,6 +185,19 @@ class DeviceTests(unittest.TestCase):
         self.assertFalse(transport.is_open)
         self.assertIsNone(device.identity)
         self.assertIsNone(device.confirmed_state)
+
+    def test_repeated_multi_route_connect_switch_disconnect_cycles(self):
+        initial = parse_channel_list("(@1!0:24!0,1!9,9!2,6!4,11!6,8!7,14!7)")
+        for _ in range(10):
+            device, transport = connected_device(FakeSerialTransport(state=initial))
+            self.assertEqual(device.confirmed_state, initial)
+            address = RelayAddress(12, 3)
+            closed = device.set_relay(address, close=True)
+            self.assertTrue(closed.is_closed(address))
+            opened = device.set_relay(address, close=False)
+            self.assertFalse(opened.is_closed(address))
+            device.disconnect()
+            self.assertFalse(transport.is_open)
 
     def test_reset_synchronizes_and_verifies_default(self):
         initial = RelayState([RelayAddress(4, 2), RelayAddress(5, 9)])

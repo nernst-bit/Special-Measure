@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 class WorkerSignals(QObject):
     succeeded = Signal(object)
     failed = Signal(object)
+    finished = Signal()
 
 
 class Worker(QRunnable):
@@ -25,3 +26,5 @@ class Worker(QRunnable):
             self.signals.failed.emit(exc)
         else:
             self.signals.succeeded.emit(result)
+        finally:
+            self.signals.finished.emit()
