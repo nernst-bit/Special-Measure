@@ -47,8 +47,11 @@ class MainWindow(QMainWindow):
         self.client = QSwitchControllerClient(controller_url) if controller_url else None
         self.controller_connected = False
         self.controller_mode = "normal"
+        self.requested_mode = "normal"
+        self._mode_edit_pending = False
         self.gui_protected: set[int] = set()
         self.system_protected: set[int] = set()
+        self._protection_edit_pending = {"gui": False, "system": False}
         self.device: QSwitchDevice | None = None
         self.state: RelayState | None = None
         self._busy = False
@@ -116,11 +119,14 @@ class MainWindow(QMainWindow):
         self.mode_combo.addItem("GUI/manual lock — automation still allowed", "gui_lock")
         self.mode_combo.addItem("Global/system lock — all writes blocked", "system_lock")
         self.apply_mode_button = QPushButton("Apply mode")
+        self.mode_combo.currentIndexChanged.connect(self._mode_selection_changed)
         permissions_layout.addWidget(QLabel("Write mode:"))
         permissions_layout.addWidget(self.mode_combo, 1)
         permissions_layout.addWidget(self.apply_mode_button)
         self.gui_lines = self._line_selector("GUI-only protected lines")
         self.system_lines = self._line_selector("System-protected lines")
+        self.gui_lines[1].itemChanged.connect(lambda _item: self._protection_selection_changed("gui"))
+        self.system_lines[1].itemChanged.connect(lambda _item: self._protection_selection_changed("system"))
         permissions_layout.addWidget(self.gui_lines[0])
         permissions_layout.addWidget(self.system_lines[0])
         self.apply_protection_button = QPushButton("Apply line protections")
@@ -480,13 +486,19 @@ class MainWindow(QMainWindow):
 
     def _apply_snapshot(self, snapshot: dict) -> None:
         self.controller_mode = snapshot.get("mode", "normal")
-        self.gui_protected = set(snapshot.get("gui_protected", []))
-        self.system_protected = set(snapshot.get("system_protected", []))
-        self._set_line_checks(self.gui_lines[1], self.gui_protected)
-        self._set_line_checks(self.system_lines[1], self.system_protected)
-        mode_index = self.mode_combo.findData(self.controller_mode)
-        if mode_index >= 0:
-            self.mode_combo.setCurrentIndex(mode_index)
+        applied_gui_protected = set(snapshot.get("gui_protected", []))
+        applied_system_protected = set(snapshot.get("system_protected", []))
+        self.gui_protected = applied_gui_protected
+        self.system_protected = applied_system_protected
+        if not self._protection_edit_pending["gui"]:
+            self._set_line_checks(self.gui_lines[1], applied_gui_protected)
+        if not self._protection_edit_pending["system"]:
+            self._set_line_checks(self.system_lines[1], applied_system_protected)
+        if not self._mode_edit_pending:
+            self.requested_mode = self.controller_mode
+            mode_index = self.mode_combo.findData(self.controller_mode)
+            if mode_index >= 0:
+                self.mode_combo.setCurrentIndex(mode_index)
         raw_state = snapshot.get("state")
         self.state = None if raw_state is None else RelayState(RelayAddress(int(item.split("!")[0]), int(item.split("!")[1])) for item in raw_state)
         if self.state is None:
@@ -497,6 +509,16 @@ class MainWindow(QMainWindow):
             self.breakout_label.setText(f"Breakout relays: {self.state.breakout_count} / {BREAKOUT_RELAY_LIMIT}")
         self.permission_label.setText(f"Permissions: {snapshot.get('mode', 'unknown').replace('_', ' ').upper()}")
         self._update_reset_explanation()
+
+    def _mode_selection_changed(self, _index: int) -> None:
+        requested_mode = self.mode_combo.currentData()
+        if requested_mode is None:
+            return
+        self.requested_mode = requested_mode
+        self._mode_edit_pending = requested_mode != self.controller_mode
+
+    def _protection_selection_changed(self, kind: str) -> None:
+        self._protection_edit_pending[kind] = True
 
     def _set_line_checks(self, widget: QListWidget, lines: set[int]) -> None:
         widget.blockSignals(True)
@@ -511,9 +533,15 @@ class MainWindow(QMainWindow):
     def apply_permission_mode(self) -> None:
         if self.client is None or not self.controller_connected or self._busy:
             return
-        mode = self.mode_combo.currentData()
+        mode = self.requested_mode
         self._set_busy(True, f"Applying controller mode: {mode}…")
-        self._run(lambda: self.client.set_mode(mode), lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "Controller mode applied")), partial(self._operation_failed, "Could not apply controller mode"))
+
+        def applied(snapshot):
+            self._mode_edit_pending = False
+            self._apply_snapshot(snapshot)
+            self._set_busy(False, "Controller mode applied")
+
+        self._run(lambda: self.client.set_mode(mode), applied, partial(self._operation_failed, "Could not apply controller mode"))
 
     def apply_line_protection(self) -> None:
         if self.client is None or not self.controller_connected or self._busy:
@@ -524,7 +552,13 @@ class MainWindow(QMainWindow):
         def apply():
             self.client.set_protection(gui_lines, system=False)
             return self.client.set_protection(system_lines, system=True)
-        self._run(apply, lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "Line protections applied; relay state unchanged")), partial(self._operation_failed, "Could not apply line protections"))
+        def applied(snapshot):
+            self._protection_edit_pending["gui"] = False
+            self._protection_edit_pending["system"] = False
+            self._apply_snapshot(snapshot)
+            self._set_busy(False, "Line protections applied; relay state unchanged")
+
+        self._run(apply, applied, partial(self._operation_failed, "Could not apply line protections"))
 
     def _update_reset_explanation(self) -> None:
         blocked_reason = self._reset_block_reason()

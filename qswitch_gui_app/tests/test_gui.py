@@ -2,6 +2,7 @@ import threading
 import time
 import unittest
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from qswitch_gui.ui.main_window import MainWindow
@@ -20,6 +21,9 @@ class FakeControllerClient:
     def __init__(self):
         self.mode = "normal"
         self.mode_calls = []
+        self.gui_protected = set()
+        self.system_protected = set()
+        self.protection_calls = []
         self.refresh_started = threading.Event()
         self.release_refresh = threading.Event()
         self.block_first_refresh = True
@@ -29,8 +33,8 @@ class FakeControllerClient:
             "identity": "simulator",
             "connected": True,
             "mode": self.mode,
-            "gui_protected": [],
-            "system_protected": [],
+            "gui_protected": sorted(self.gui_protected),
+            "system_protected": sorted(self.system_protected),
             "state": [],
         }
 
@@ -44,6 +48,15 @@ class FakeControllerClient:
     def set_mode(self, mode):
         self.mode_calls.append(mode)
         self.mode = mode
+        return self.snapshot()
+
+    def set_protection(self, lines, system):
+        lines = set(lines)
+        self.protection_calls.append((sorted(lines), system))
+        if system:
+            self.system_protected = lines
+        else:
+            self.gui_protected = lines
         return self.snapshot()
 
 
@@ -98,6 +111,43 @@ class PermissionModeGuiTests(unittest.TestCase):
         self._apply_mode("gui_lock")
         self._apply_mode("normal")
         self.assertEqual(self.client.mode_calls, ["system_lock", "gui_lock", "normal"])
+
+    def test_refresh_preserves_pending_mode_until_apply_in_both_directions(self):
+        self.window.mode_combo.setCurrentIndex(self.window.mode_combo.findData("system_lock"))
+        self.window.refresh_state()
+        self._process_until(self.client.refresh_started.is_set)
+        self.client.release_refresh.set()
+        self._process_until(lambda: not self.window._refresh_in_flight)
+
+        self.assertEqual(self.window.controller_mode, "normal")
+        self.assertEqual(self.window.mode_combo.currentData(), "system_lock")
+        self.window.apply_mode_button.click()
+        self._process_until(lambda: self.client.mode_calls == ["system_lock"] and not self.window._busy)
+        self.assertEqual(self.window.controller_mode, "system_lock")
+
+        self.window.mode_combo.setCurrentIndex(self.window.mode_combo.findData("normal"))
+        self.window.refresh_state()
+        self._process_until(lambda: not self.window._refresh_in_flight)
+        self.assertEqual(self.window.controller_mode, "system_lock")
+        self.assertEqual(self.window.mode_combo.currentData(), "normal")
+        self.window.apply_mode_button.click()
+        self._process_until(lambda: self.client.mode_calls == ["system_lock", "normal"] and not self.window._busy)
+        self.assertEqual(self.window.controller_mode, "normal")
+
+    def test_refresh_preserves_pending_line_protection_until_apply(self):
+        item = self.window.gui_lines[1].item(0)
+        item.setCheckState(Qt.CheckState.Checked)
+        self.window.refresh_state()
+        self._process_until(self.client.refresh_started.is_set)
+        self.client.release_refresh.set()
+        self._process_until(lambda: not self.window._refresh_in_flight)
+
+        self.assertEqual(self.window.gui_lines[1].item(0).checkState().name, "Checked")
+        self.assertEqual(self.window.client.gui_protected, set())
+        self.window.apply_protection_button.click()
+        self._process_until(lambda: not self.window._busy)
+        self.assertIn(([1], False), self.client.protection_calls)
+        self.assertEqual(self.client.gui_protected, {1})
 
 
 if __name__ == "__main__":
