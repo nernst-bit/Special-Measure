@@ -37,19 +37,25 @@ class RoutingMatrix(QTableWidget):
                 self._buttons[address] = button
         self.show_unknown()
 
-    def show_state(self, state: RelayState, enabled: bool = True) -> None:
+    def show_state(self, state: RelayState, enabled: bool = True, gui_protected=frozenset(), system_protected=frozenset()) -> None:
         for address, button in self._buttons.items():
             closed = state.is_closed(address)
             label = "CLOSED" if closed else "OPEN"
+            protection = ""
+            if address.signal in system_protected:
+                protection = " — SYSTEM PROTECTED"
+            elif address.signal in gui_protected:
+                protection = " — GUI PROTECTED"
             button.setText("●" if closed else "○")
             button.setToolTip(
-                f"Signal {address.signal} → {address.destination_name}: {label} (hardware confirmed)"
+                f"Signal {address.signal} → {address.destination_name}: {label} (hardware confirmed){protection}"
             )
             button.setAccessibleName(
-                f"Signal {address.signal} to {address.destination_name}, {label}, hardware confirmed"
+                f"Signal {address.signal} to {address.destination_name}, {label}, hardware confirmed{protection}"
             )
-            button.setEnabled(enabled)
+            button.setEnabled(enabled and not protection)
             button.setProperty("relayState", label.lower())
+            button.setProperty("protectedLine", bool(protection))
             button.style().unpolish(button)
             button.style().polish(button)
 
@@ -81,4 +87,4 @@ class RoutingMatrix(QTableWidget):
 
     def set_controls_enabled(self, enabled: bool) -> None:
         for button in self._buttons.values():
-            button.setEnabled(enabled)
+            button.setEnabled(enabled and not bool(button.property("protectedLine")))

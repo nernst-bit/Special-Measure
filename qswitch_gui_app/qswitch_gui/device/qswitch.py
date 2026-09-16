@@ -75,6 +75,10 @@ class QSwitchDevice:
         self.confirmed_state = state
         return state
 
+    def error_status(self) -> str:
+        self._require_connected_transport()
+        return self.transport.query_line("SYST:ERR:ALL?").strip()
+
     def set_relay(self, address: RelayAddress, close: bool) -> RelayState:
         self._require_known_state()
         if close and address.is_bnc:

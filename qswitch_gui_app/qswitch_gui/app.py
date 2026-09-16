@@ -11,6 +11,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="use an obvious simulated QSwitch; never opens a real serial port",
     )
+    parser.add_argument(
+        "--controller-url",
+        default="http://127.0.0.1:8765",
+        help="central controller URL (the default normal architecture)",
+    )
+    parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="legacy direct USB mode; use only when no controller service is running",
+    )
     return parser
 
 
@@ -23,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     application = QApplication(sys.argv[:1])
     application.setApplicationName("Wang Lab QSwitch Controller")
     application.setOrganizationName("Wang Lab, UIUC")
-    window = MainWindow(demo=args.demo)
+    window = MainWindow(demo=args.demo, controller_url=None if args.direct or args.demo else args.controller_url)
     window.show()
     return application.exec()
 

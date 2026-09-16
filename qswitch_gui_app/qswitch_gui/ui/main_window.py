@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import partial
 
-from PySide6.QtCore import Qt, QThreadPool, Signal
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -27,6 +28,7 @@ from qswitch_gui.device import (
     SerialTransport,
     enumerate_serial_ports,
 )
+from qswitch_gui.client import QSwitchControllerClient
 from qswitch_gui.model import BREAKOUT_RELAY_LIMIT, RelayAddress, RelayState
 
 from .routing_matrix import RoutingMatrix
@@ -36,19 +38,24 @@ from .worker import Worker
 class MainWindow(QMainWindow):
     protocol_line = Signal(str, str)
 
-    def __init__(self, demo: bool = False) -> None:
+    def __init__(self, demo: bool = False, controller_url: str | None = None) -> None:
         super().__init__()
         self.demo = demo
+        self.controller_url = controller_url
+        self.client = QSwitchControllerClient(controller_url) if controller_url else None
+        self.controller_connected = False
         self.device: QSwitchDevice | None = None
         self.state: RelayState | None = None
         self._busy = False
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_state)
         self.thread_pool = QThreadPool(self)
         self.thread_pool.setMaxThreadCount(1)
         # Keep signal objects alive until their queued GUI callbacks have run.
         # QRunnable auto-deletion otherwise permits QObject cleanup on the pool
         # thread, which is unsafe for PySide6 on some native Qt platforms.
         self._workers: set[Worker] = set()
-        self.setWindowTitle("Wang Lab QSwitch Controller" + (" — SIMULATED DEVICE" if demo else ""))
+        self.setWindowTitle("Wang Lab QSwitch GUI" + (" — SIMULATED DEVICE" if demo else ""))
         self.resize(1120, 820)
         self.setMinimumSize(900, 650)
         self._build_ui()
@@ -104,6 +111,9 @@ class MainWindow(QMainWindow):
         title_row.addWidget(matrix_title)
         title_row.addStretch()
         title_row.addWidget(self.breakout_label)
+        self.permission_label = QLabel("Permissions: unknown")
+        self.permission_label.setObjectName("permissionLabel")
+        title_row.addWidget(self.permission_label)
         root.addLayout(title_row)
 
         self.matrix = RoutingMatrix()
@@ -114,6 +124,15 @@ class MainWindow(QMainWindow):
         self.reset_button = QPushButton("Reset to Default (Soft Ground)")
         self.reset_button.setObjectName("resetButton")
         actions.addWidget(self.refresh_state_button)
+        actions.addWidget(QLabel("Refresh every"))
+        self.refresh_interval = QSpinBox()
+        self.refresh_interval.setRange(500, 60000)
+        self.refresh_interval.setSingleStep(500)
+        self.refresh_interval.setValue(2000)
+        self.refresh_interval.setSuffix(" ms")
+        self.refresh_interval.setToolTip("Read-only state polling interval; polling never sends relay commands")
+        self.refresh_interval.valueChanged.connect(self._refresh_interval_changed)
+        actions.addWidget(self.refresh_interval)
         actions.addStretch()
         actions.addWidget(self.reset_button)
         root.addLayout(actions)
@@ -167,6 +186,7 @@ class MainWindow(QMainWindow):
             QToolButton[relayState="open"] { color: #26323c; background: #ffffff; border: 1px solid #aab4bd; border-radius: 3px; font-weight: 700; }
             QToolButton[relayState="pending"] { color: #4e3600; background: #ffd66b; border: 1px solid #c08b00; border-radius: 3px; font-weight: 800; }
             QToolButton[relayState="unknown"] { color: #ffffff; background: #707981; border: 1px dashed #394149; border-radius: 3px; font-weight: 800; }
+            QToolButton[protectedLine="true"] { border: 3px solid #b35a00; }
             """
         )
 
@@ -175,6 +195,12 @@ class MainWindow(QMainWindow):
         self.protocol_log.appendPlainText(f"{stamp}  {direction:<5} {message}")
 
     def refresh_ports(self) -> None:
+        if self.client is not None:
+            self.port_combo.clear()
+            self.port_combo.addItem(f"Controller: {self.controller_url}", self.controller_url)
+            self.protocol_event("INFO", "Central-controller mode; GUI does not open the QSwitch port")
+            self._update_controls()
+            return
         selected = self.port_combo.currentData()
         self.port_combo.clear()
         if self.demo:
@@ -202,6 +228,17 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def connect_device(self) -> None:
+        if self.client is not None:
+            self._set_busy(True, "Connecting to central QSwitch controller…")
+            def connected(snapshot):
+                self.controller_connected = True
+                self.identity_label.setText(f"Controller: {snapshot.get('identity') or 'connected'}")
+                self.connection_badge.setText("CONTROLLER")
+                self.connection_badge.setStyleSheet("background: #16734a;")
+                self._apply_snapshot(snapshot)
+                self._set_busy(False, "Connected to controller; state confirmed by controller")
+            self._run(self.client.state, connected, partial(self._operation_failed, "Controller connection failed"))
+            return
         port = self.port_combo.currentData()
         if not port:
             self._show_error("Cannot connect", RuntimeError("Select an available serial port first."))
@@ -233,6 +270,16 @@ class MainWindow(QMainWindow):
         self._run(candidate.connect, connected, failed)
 
     def disconnect_device(self) -> None:
+        if self.client is not None:
+            self.controller_connected = False
+            self.state = None
+            self.identity_label.setText("Controller: Not connected")
+            self.connection_badge.setText("DISCONNECTED")
+            self.connection_badge.setStyleSheet("background: #5b6670;")
+            self.matrix.show_unknown()
+            self._set_status("Disconnected from controller")
+            self._update_controls()
+            return
         if self.device is None:
             return
         self.device.disconnect()
@@ -248,6 +295,10 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def refresh_state(self) -> None:
+        if self.client is not None:
+            self._set_busy(True, "Reading actual state from central controller…")
+            self._run(self.client.refresh, lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "State refreshed and confirmed")), partial(self._operation_failed, "State refresh failed"))
+            return
         if self.device is None:
             return
         self._set_busy(True, "Reading CLOSE:STATE? from QSwitch…")
@@ -258,6 +309,14 @@ class MainWindow(QMainWindow):
         )
 
     def toggle_relay(self, address: RelayAddress) -> None:
+        if self.client is not None:
+            if not self.controller_connected or self.state is None or self._busy:
+                return
+            close = not self.state.is_closed(address)
+            self._set_busy(True, f"{'CLOSE' if close else 'OPEN'} requested through controller; awaiting verification…")
+            self.matrix.show_pending(address, "CLOSE" if close else "OPEN")
+            self._run(lambda: self.client.relay(address.signal, address.destination, close), lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "Relay state verified by controller")), partial(self._operation_failed, "Controller relay request failed"))
+            return
         if self.device is None or self.state is None or self._busy:
             return
         close = not self.state.is_closed(address)
@@ -288,6 +347,15 @@ class MainWindow(QMainWindow):
         )
 
     def confirm_reset(self) -> None:
+        if self.client is not None:
+            if self.client is None or not self.controller_connected:
+                return
+            dialog = QMessageBox.question(self, "Confirm QSwitch reset", "Reset through the central controller to the documented default state?", QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Reset, QMessageBox.StandardButton.Cancel)
+            if dialog != QMessageBox.StandardButton.Reset:
+                return
+            self._set_busy(True, "Reset requested through controller; awaiting verification…")
+            self._run(lambda: self.client.reset("gui"), lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "Reset verified by controller")), partial(self._operation_failed, "Controller reset failed"))
+            return
         if self.device is None:
             return
         dialog = QMessageBox(self)
@@ -345,17 +413,46 @@ class MainWindow(QMainWindow):
         self.matrix.show_state(state, enabled=not self._busy)
         self.breakout_label.setText(f"Breakout relays: {state.breakout_count} / {BREAKOUT_RELAY_LIMIT}")
 
+    def _apply_snapshot(self, snapshot: dict) -> None:
+        raw_state = snapshot.get("state")
+        self.state = None if raw_state is None else RelayState(RelayAddress(int(item.split("!")[0]), int(item.split("!")[1])) for item in raw_state)
+        if self.state is None:
+            self.matrix.show_unknown()
+            self.breakout_label.setText(f"Breakout relays: unknown / {BREAKOUT_RELAY_LIMIT}")
+        else:
+            self.matrix.show_state(self.state, enabled=not self._busy, gui_protected=set(snapshot.get("gui_protected", [])), system_protected=set(snapshot.get("system_protected", [])))
+            self.breakout_label.setText(f"Breakout relays: {self.state.breakout_count} / {BREAKOUT_RELAY_LIMIT}")
+        self.permission_label.setText(f"Permissions: {snapshot.get('mode', 'unknown').replace('_', ' ').upper()}")
+
     def _set_busy(self, busy: bool, status: str) -> None:
         self._busy = busy
         self._set_status(status)
         self._update_controls()
+
+    def _refresh_interval_changed(self, interval: int) -> None:
+        self.refresh_timer.setInterval(interval)
+        if self.refresh_timer.isActive():
+            self.refresh_timer.start()
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(f"Status: {message}")
         self.protocol_event("INFO", message)
 
     def _update_controls(self) -> None:
-        connected = self.device is not None and self.device.is_connected
+        connected = (self.device is not None and self.device.is_connected) or self.controller_connected
+        if self.client is not None:
+            self.port_combo.setEnabled(False)
+            self.refresh_ports_button.setEnabled(False)
+            self.connect_button.setEnabled(not self.controller_connected and not self._busy)
+            self.disconnect_button.setEnabled(self.controller_connected and not self._busy)
+            self.refresh_state_button.setEnabled(self.controller_connected and not self._busy)
+            self.reset_button.setEnabled(self.controller_connected and not self._busy)
+            self.matrix.set_controls_enabled(self.controller_connected and self.state is not None and not self._busy)
+            if self.controller_connected and not self.refresh_timer.isActive():
+                self.refresh_timer.start(self.refresh_interval.value())
+            elif not self.controller_connected:
+                self.refresh_timer.stop()
+            return
         port_available = bool(self.port_combo.currentData())
         self.port_combo.setEnabled(not connected and not self._busy)
         self.refresh_ports_button.setEnabled(not connected and not self._busy)
@@ -365,6 +462,10 @@ class MainWindow(QMainWindow):
         self.refresh_state_button.setEnabled(connected and not self._busy)
         self.reset_button.setEnabled(connected and not self._busy)
         self.matrix.set_controls_enabled(state_ready)
+        if connected and not self.refresh_timer.isActive():
+            self.refresh_timer.start(self.refresh_interval.value())
+        elif not connected:
+            self.refresh_timer.stop()
 
     def _show_error(self, title: str, exc: Exception) -> None:
         self.protocol_event("ERROR", f"{title}: {exc}")

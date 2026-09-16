@@ -1,8 +1,8 @@
 # Wang Lab QSwitch GUI
 
-A focused desktop controller for the Quantum Machines / QDevil QSwitch. It connects over the QSwitch USB virtual serial port, displays the complete 24 × 10 relay matrix, switches individual relays, refreshes actual hardware state, and resets the instrument to its documented default state.
+A central Python controller service and Qt GUI for the Quantum Machines / QDevil QSwitch. The service owns the USB serial connection; the GUI and Special Measure are clients of the same serialized, state-verifying controller.
 
-This is a standalone Python application. It does not require or communicate through MATLAB or Special Measure. Version 1 supports USB serial only; Ethernet/UDP is intentionally out of scope.
+The GUI remains an individual package. The current hardware transport is USB serial; Ethernet/UDP is intentionally out of scope for this update.
 
 The application is intended for the Wang Lab Windows 11 computer. Development and the explicit simulator also work on macOS.
 
@@ -23,15 +23,24 @@ The displayed matrix is hardware-authoritative. A click becomes `PENDING`; the p
 
 Install 64-bit Python 3.10 or newer from Python.org if it is not already available. During installation, enable the option to add Python to `PATH`.
 
-From Git Bash after cloning or pulling the repository:
+Install dependencies from `qswitch_gui_app`:
 
 ```bash
-git clone --branch qswitch-driver https://github.com/nernst-bit/Special-Measure.git
-cd Special-Measure/qswitch_gui_app
 python -m venv .venv
 source .venv/Scripts/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+pip install -e '.[api,test]'
+```
+
+Start the one controller (replace `COM4` with the actual port):
+
+```bash
+python -m qswitch_gui.service --port COM4
+```
+
+Start the GUI in another terminal:
+
+```bash
 python -m qswitch_gui
 ```
 
@@ -42,14 +51,12 @@ No administrator privileges, MATLAB, NI-VISA, IDE, fixed COM number, or Unix run
 ## Connecting
 
 1. Connect and power the QSwitch according to its manual, then attach its USB cable.
-2. Start the GUI and select the appropriate entry, such as `COM3 — USB Serial Device`. Port labels come from pyserial's normal Windows port enumeration; all serial devices may appear.
-3. Click **Connect**. The program opens only the selected port at 9600 baud, 8 data bits, no parity, one stop bit, no flow control, with LF termination and bounded two-second reads/writes.
-4. The program queries `*IDN?`. It refuses to operate unless the second identity field is `QSwitch`.
-5. It then queries `CLOSE:STATE?` before enabling any routing control.
+2. Start the controller with that port. It opens the port at 9600 baud, 8 data bits, no parity, one stop bit, no flow control, and LF termination.
+3. Start the GUI. It connects to the controller URL and observes the controller's verified state; it never opens the hardware port in normal mode.
 
 Click **Refresh Ports** after connecting or removing USB devices. The application never silently changes the selected device or reconnects to another port.
 
-Click **Disconnect** before MATLAB, Special Measure, a terminal, a firmware updater, or another program needs the COM port. Closing the window also closes the serial port.
+Stop the controller before a firmware updater or another hardware tool needs the COM port. MATLAB/Special Measure uses the controller API and does not open the COM port.
 
 ## Controls
 
@@ -73,10 +80,29 @@ The small timestamped protocol log records TX, RX, status, and error events for 
 Install dependencies as above, then start the explicit simulator:
 
 ```bash
-python -m qswitch_gui --demo
+python -m qswitch_gui.service --demo
+# in another terminal:
+python -m qswitch_gui
 ```
 
-The window carries a prominent orange `SIMULATED DEVICE` banner and uses no real serial port. Normal `python -m qswitch_gui` never activates simulation automatically.
+The simulator service is stateful and exercises the same API, GUI refresh, permissions, and verification flow without hardware.
+
+## Controller API
+
+The small HTTP API is served on `http://127.0.0.1:8765` by default:
+
+- `GET /health`, `GET /state`, `GET /identity`, `GET /error`
+- `POST /state/refresh`
+- `POST /relays/open` and `/relays/close` with `{"signal": 1, "destination": 3, "actor": "automation"}`
+- `POST /reset` with `{"actor": "automation"}`
+- `PUT /permissions/mode` with `{"mode": "normal"|"gui_lock"|"system_lock"}`
+- `PUT /permissions/protection` with `{"lines": [1, 2], "system": false|true}`
+
+`gui_lock` blocks GUI writes but permits automation. `system_lock` blocks all writes. GUI-only line protection blocks GUI writes to selected lines; system line protection blocks both actors. Protection changes do not move relays. RESET is conservative: it is blocked by system protection, and manual RESET is also blocked by GUI protection or GUI lock.
+
+## Special Measure
+
+The generator `instruments/create_sminst_QSwitch.m` creates the controller-backed instrument and includes the required `inst.datadim = zeros(6,1)` field. In MATLAB, start the Python controller, run `ind = smloadinst('QSwitch', [], 'none')`, then use the existing six selector channels through the normal Special Measure driver. Set `inst.data.controller_url` in the generated definition if the controller is not local. The MATLAB driver hides HTTP transport and waits for each controller response before the experiment continues.
 
 ## Tests
 
