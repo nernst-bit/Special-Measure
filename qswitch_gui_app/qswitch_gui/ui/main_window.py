@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.device: QSwitchDevice | None = None
         self.state: RelayState | None = None
         self._busy = False
+        self._refresh_in_flight = False
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_state)
         self.thread_pool = QThreadPool(self)
@@ -334,19 +335,42 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def refresh_state(self) -> None:
-        if self._busy:
+        if self._busy or self._refresh_in_flight:
             return
+        self._refresh_in_flight = True
+        self._update_controls()
         if self.client is not None:
-            self._set_busy(True, "Reading actual state from central controller…")
-            self._run(self.client.refresh, lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "State refreshed and confirmed")), partial(self._operation_failed, "State refresh failed"))
+            def refreshed(snapshot):
+                self._refresh_in_flight = False
+                self._apply_snapshot(snapshot)
+                self._set_status("State refreshed and confirmed")
+                self._update_controls()
+
+            def failed(exc):
+                self._refresh_in_flight = False
+                self._operation_failed("State refresh failed", exc)
+
+            self._run(self.client.refresh, refreshed, failed)
             return
         if self.device is None:
+            self._refresh_in_flight = False
+            self._update_controls()
             return
-        self._set_busy(True, "Reading CLOSE:STATE? from QSwitch…")
+
+        def refreshed(state):
+            self._refresh_in_flight = False
+            self._apply_confirmed_state(state)
+            self._set_status("State refreshed and confirmed")
+            self._update_controls()
+
+        def failed(exc):
+            self._refresh_in_flight = False
+            self._operation_failed("State refresh failed", exc)
+
         self._run(
             self.device.refresh_state,
-            lambda state: (self._apply_confirmed_state(state), self._set_busy(False, "State refreshed and confirmed")),
-            partial(self._operation_failed, "State refresh failed"),
+            refreshed,
+            failed,
         )
 
     def toggle_relay(self, address: RelayAddress) -> None:
@@ -538,8 +562,8 @@ class MainWindow(QMainWindow):
             self.port_combo.setEnabled(False)
             self.refresh_ports_button.setEnabled(False)
             self.connect_button.setEnabled(not self.controller_connected and not self._busy)
-            self.disconnect_button.setEnabled(self.controller_connected and not self._busy)
-            self.refresh_state_button.setEnabled(self.controller_connected and not self._busy)
+            self.disconnect_button.setEnabled(self.controller_connected and not self._busy and not self._refresh_in_flight)
+            self.refresh_state_button.setEnabled(self.controller_connected and not self._busy and not self._refresh_in_flight)
             manual_allowed = self.controller_mode == "normal"
             self.reset_button.setEnabled(self.controller_connected and not self._busy and manual_allowed and self._reset_block_reason() is None)
             self.matrix.set_controls_enabled(self.controller_connected and self.state is not None and not self._busy and manual_allowed)
@@ -557,9 +581,9 @@ class MainWindow(QMainWindow):
         self.port_combo.setEnabled(not connected and not self._busy)
         self.refresh_ports_button.setEnabled(not connected and not self._busy)
         self.connect_button.setEnabled(not connected and not self._busy and port_available)
-        self.disconnect_button.setEnabled(connected and not self._busy)
+        self.disconnect_button.setEnabled(connected and not self._busy and not self._refresh_in_flight)
         state_ready = connected and self.state is not None and not self._busy
-        self.refresh_state_button.setEnabled(connected and not self._busy)
+        self.refresh_state_button.setEnabled(connected and not self._busy and not self._refresh_in_flight)
         self.reset_button.setEnabled(connected and not self._busy and self._reset_block_reason() is None)
         self.matrix.set_controls_enabled(state_ready)
         self.mode_combo.setEnabled(False)
