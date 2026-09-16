@@ -334,6 +334,8 @@ class MainWindow(QMainWindow):
         self._update_controls()
 
     def refresh_state(self) -> None:
+        if self._busy:
+            return
         if self.client is not None:
             self._set_busy(True, "Reading actual state from central controller…")
             self._run(self.client.refresh, lambda snapshot: (self._apply_snapshot(snapshot), self._set_busy(False, "State refreshed and confirmed")), partial(self._operation_failed, "State refresh failed"))

@@ -14,9 +14,9 @@ channel = ic(2); operation = ic(3); %#ok<NASGU>
 options = weboptions('MediaType', 'application/json', 'Timeout', 10);
 switch channel
     case 1
-        require_write(operation, 'OPEN'); val = relay_request(inst.controller_url, 'open', val, options);
+        require_write(operation, 'OPEN'); relay_request(inst.controller_url, 'open', val, options);
     case 2
-        require_write(operation, 'CLOSE'); val = relay_request(inst.controller_url, 'close', val, options);
+        require_write(operation, 'CLOSE'); relay_request(inst.controller_url, 'close', val, options);
     case 3
         require_read(operation, 'STATE'); snapshot = webread([inst.controller_url '/state'], options); val = state_text(snapshot.state);
     case 4

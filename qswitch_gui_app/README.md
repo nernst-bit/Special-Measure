@@ -2,7 +2,7 @@
 
 A central Python controller service and Qt GUI for the Quantum Machines / QDevil QSwitch. The service owns the USB serial connection; the GUI and Special Measure are clients of the same serialized, state-verifying controller.
 
-The GUI remains an individual package. The current hardware transport is USB serial; Ethernet/UDP is intentionally out of scope for this update.
+The GUI remains an individual package. The current hardware transport is USB serial; Ethernet/UDP is intentionally out of scope for this update. The controller binds to `127.0.0.1` only. Permission modes and actor labels are a trusted same-machine client model intended primarily to prevent accidental manual interference.
 
 The application is intended for the Wang Lab Windows 11 computer. Development and the explicit simulator also work on macOS.
 
@@ -85,7 +85,7 @@ python -m qswitch_gui.service --demo
 python -m qswitch_gui
 ```
 
-The simulator service is stateful and exercises the same API, GUI refresh, permissions, and verification flow without hardware.
+The simulator service is stateful and exercises the same API, GUI refresh, permissions, and verification flow without hardware. The normal GUI command has no direct-hardware mode; only the explicit `--demo` developer simulator avoids the controller service.
 
 ## Controller API
 
@@ -116,7 +116,7 @@ pip install -e '.[test]'
 pytest
 ```
 
-The backend and simulator are independent of Qt, so device/parser tests require no QSwitch. The physical hardware has not been tested by this Python project yet.
+The test extra includes FastAPI and the TestClient dependency used by this repository. Use `.[api]` when only the controller service and GUI are needed. The backend and simulator are independent of Qt, so device/parser tests require no QSwitch. The physical hardware has not been tested by this Python project yet.
 
 ## Troubleshooting
 

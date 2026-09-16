@@ -11,8 +11,8 @@ function outputFile = create_sminst_QSwitch(outputFile)
 % Use the backend convention directly, for example:
 %   smdata.inst(ind).cntrlfn([ind 1 1], [12 3]);
 %
-% The COM port is deliberately not stored here.  smloadinst's serial
-% override supplies it at setup time.
+% The COM port is deliberately not stored here. The Python controller owns
+% the serial connection; Special Measure uses the controller URL in inst.data.
 
 if nargin < 1 || isempty(outputFile)
     outputFile = fullfile(fileparts(mfilename('fullpath')), 'sminst_QSwitch.mat');

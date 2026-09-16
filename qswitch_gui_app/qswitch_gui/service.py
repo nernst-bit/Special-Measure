@@ -8,10 +8,9 @@ from qswitch_gui.device import FakeSerialTransport, QSwitchDevice, SerialTranspo
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Single-owner QSwitch controller service")
+    parser = argparse.ArgumentParser(description="Single-owner localhost QSwitch controller service")
     parser.add_argument("--port", help="QSwitch serial port, for example COM4")
     parser.add_argument("--demo", action="store_true", help="serve the stateful simulator instead of hardware")
-    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--api-port", type=int, default=8765)
     args = parser.parse_args(argv)
     if not args.demo and not args.port:
@@ -21,7 +20,8 @@ def main(argv=None) -> int:
     controller.connect()
     try:
         import uvicorn
-        uvicorn.run(create_app(controller), host=args.host, port=args.api_port)
+        # This candidate intentionally serves only same-machine GUI/MATLAB clients.
+        uvicorn.run(create_app(controller), host="127.0.0.1", port=args.api_port)
     finally:
         controller.disconnect()
     return 0

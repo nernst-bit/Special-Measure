@@ -55,6 +55,25 @@ class ApiSimulatorTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(self.transport.commands, before)
 
+    def test_reset_is_blocked_by_all_relevant_policies(self):
+        for mode, actor in (("gui_lock", "gui"), ("system_lock", "automation")):
+            with self.subTest(mode=mode):
+                self.client.put("/permissions/mode", json={"mode": mode})
+                before = list(self.transport.commands)
+                response = self.client.post("/reset", json={"actor": actor})
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(self.transport.commands, before)
+                self.client.put("/permissions/mode", json={"mode": "normal"})
+
+        for system, actor in ((False, "gui"), (True, "automation")):
+            with self.subTest(system=system):
+                self.client.put("/permissions/protection", json={"lines": [1], "system": system})
+                before = list(self.transport.commands)
+                response = self.client.post("/reset", json={"actor": actor})
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(self.transport.commands, before)
+                self.client.put("/permissions/protection", json={"lines": [], "system": system})
+
 
 if __name__ == "__main__":
     unittest.main()

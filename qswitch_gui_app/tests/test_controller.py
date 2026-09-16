@@ -56,6 +56,16 @@ class ControllerPolicyTests(unittest.TestCase):
             service.reset(actor=Actor.GUI)
         service.reset(actor=Actor.AUTOMATION)
 
+    def test_reset_string_actor_cannot_bypass_gui_policy(self):
+        service, _ = controller()
+        service.set_mode(PermissionMode.GUI_LOCK)
+        with self.assertRaises(PermissionDeniedError):
+            service.reset(actor="gui")
+        service.set_mode(PermissionMode.NORMAL)
+        service.set_protection([1], system=False)
+        with self.assertRaises(PermissionDeniedError):
+            service.reset(actor="gui")
+
     def test_concurrent_writes_are_serialized(self):
         service, _ = controller()
         errors = []
@@ -111,6 +121,15 @@ class ControllerPolicyTests(unittest.TestCase):
         with self.assertRaises(BreakoutLimitError):
             service.set_relays([RelayAddress(21, 1), RelayAddress(22, 2)], close=True, actor=Actor.AUTOMATION)
         self.assertEqual(transport.commands, before + ["CLOSE:STATE?"])
+
+    def test_batch_command_over_127_characters_has_no_switch_write(self):
+        service, transport = controller()
+        addresses = [RelayAddress(signal, destination) for destination in (1, 2) for signal in range(1, 21)]
+        before = list(transport.commands)
+        with self.assertRaisesRegex(RuntimeError, "maximum is 127"):
+            service.set_relays(addresses, close=True, actor=Actor.AUTOMATION)
+        self.assertEqual(transport.commands, before + ["CLOSE:STATE?"])
+        self.assertFalse(any(command.startswith("CLOSE (@") for command in transport.commands))
 
 
 if __name__ == "__main__":

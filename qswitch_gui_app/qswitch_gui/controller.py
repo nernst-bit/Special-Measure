@@ -97,6 +97,7 @@ class QSwitchController:
 
     def reset(self, *, actor: Actor) -> RelayState:
         with self._lock:
+            actor = Actor(actor)
             if self.mode is PermissionMode.SYSTEM_LOCK:
                 raise PermissionDeniedError("system lock blocks RESET for every actor")
             if actor is Actor.GUI and self.mode is PermissionMode.GUI_LOCK:

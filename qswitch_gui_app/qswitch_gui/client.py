@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -17,6 +18,15 @@ class QSwitchControllerClient:
         try:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode())
+        except HTTPError as exc:
+            detail = None
+            try:
+                body = json.loads(exc.read().decode())
+                detail = body.get("detail") if isinstance(body, dict) else None
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
+            message = detail or f"HTTP Error {exc.code}: {exc.reason}"
+            raise RuntimeError(f"QSwitch controller request {method} {path} failed: {message}") from exc
         except Exception as exc:
             raise RuntimeError(f"QSwitch controller request {method} {path} failed: {exc}") from exc
 
