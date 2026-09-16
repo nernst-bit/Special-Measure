@@ -9,6 +9,8 @@ def snapshot_dict(controller: QSwitchController) -> dict:
         "connected": snap.connected,
         "state": sorted(a.scpi for a in snap.state.closed) if snap.state else None,
         "mode": snap.mode.value,
+        "gui_lock": snap.gui_lock,
+        "system_lock": snap.system_lock,
         "gui_protected": sorted(snap.gui_protected),
         "system_protected": sorted(snap.system_protected),
     }
@@ -36,6 +38,10 @@ def create_app(controller: QSwitchController):
 
     class ModeRequest(BaseModel):
         mode: PermissionMode
+
+    class LockRequest(BaseModel):
+        lock: str
+        enabled: bool
 
     class ResetRequest(BaseModel):
         actor: Actor = Actor.AUTOMATION
@@ -92,6 +98,10 @@ def create_app(controller: QSwitchController):
     def mode(request: ModeRequest):
         controller.set_mode(request.mode)
         return snapshot_dict(controller)
+
+    @app.put("/permissions/lock")
+    def lock(request: LockRequest):
+        return call(lambda: (controller.set_lock(request.lock, request.enabled), snapshot_dict(controller))[1])
 
     @app.put("/permissions/protection")
     def protection(request: ProtectionRequest):

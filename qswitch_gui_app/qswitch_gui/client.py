@@ -40,5 +40,7 @@ class QSwitchControllerClient:
         return self.request(f"/relays/batch/{action}", "POST", {"relays": relays, "actor": actor})
     def reset(self, actor="gui"): return self.request("/reset", "POST", {"actor": actor})
     def set_mode(self, mode): return self.request("/permissions/mode", "PUT", {"mode": mode})
+    def set_lock(self, lock, enabled):
+        return self.request("/permissions/lock", "PUT", {"lock": lock, "enabled": enabled})
     def set_protection(self, lines, system):
         return self.request("/permissions/protection", "PUT", {"lines": lines, "system": system})

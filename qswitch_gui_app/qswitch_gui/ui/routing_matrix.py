@@ -12,11 +12,13 @@ HEADERS = ("Ground\n1 MΩ", "IN", "BNC 1", "BNC 2", "BNC 3", "BNC 4", "BNC 5", "
 
 class RoutingMatrix(QTableWidget):
     relay_clicked = Signal(object)
+    protection_clicked = Signal(int, bool)
 
     def __init__(self) -> None:
-        super().__init__(24, 10)
+        super().__init__(24, 12)
         self._buttons: dict[RelayAddress, QToolButton] = {}
-        self.setHorizontalHeaderLabels(HEADERS)
+        self._protection_buttons: dict[tuple[int, bool], QToolButton] = {}
+        self.setHorizontalHeaderLabels(("GUI\nprotect", "System\nprotect", *HEADERS))
         self.setVerticalHeaderLabels([f"Signal {line}" for line in range(1, 25)])
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -28,12 +30,29 @@ class RoutingMatrix(QTableWidget):
         self.setMinimumSize(760, 450)
 
         for row, signal in enumerate(range(1, 25)):
+            for column, system in enumerate((False, True)):
+                button = QToolButton()
+                button.setText("G" if not system else "S")
+                button.setCheckable(True)
+                button.setToolTip(
+                    f"Signal {signal}: {'system' if system else 'GUI/manual'} protection; click to toggle"
+                )
+                button.setAccessibleName(
+                    f"Signal {signal} {'system' if system else 'GUI/manual'} protection"
+                )
+                button.setProperty("protectionControl", True)
+                button.setProperty("protectionActive", False)
+                button.clicked.connect(
+                    lambda checked=False, line=signal, is_system=system: self.protection_clicked.emit(line, is_system)
+                )
+                self.setCellWidget(row, column, button)
+                self._protection_buttons[(signal, system)] = button
             for column, destination in enumerate(DISPLAY_DESTINATIONS):
                 address = RelayAddress(signal, destination)
                 button = QToolButton()
                 button.setMinimumHeight(23)
                 button.clicked.connect(lambda _checked=False, a=address: self.relay_clicked.emit(a))
-                self.setCellWidget(row, column, button)
+                self.setCellWidget(row, column + 2, button)
                 self._buttons[address] = button
         self.show_unknown()
 
@@ -88,3 +107,17 @@ class RoutingMatrix(QTableWidget):
     def set_controls_enabled(self, enabled: bool) -> None:
         for button in self._buttons.values():
             button.setEnabled(enabled and not bool(button.property("protectedLine")))
+
+    def set_protection_state(self, gui_protected=frozenset(), system_protected=frozenset()) -> None:
+        for signal in range(1, 25):
+            for is_system, protected in ((False, gui_protected), (True, system_protected)):
+                button = self._protection_buttons[(signal, is_system)]
+                active = signal in protected
+                button.setChecked(active)
+                button.setProperty("protectionActive", active)
+                button.style().unpolish(button)
+                button.style().polish(button)
+
+    def set_protection_controls_enabled(self, enabled: bool) -> None:
+        for button in self._protection_buttons.values():
+            button.setEnabled(enabled)

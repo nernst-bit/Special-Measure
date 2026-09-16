@@ -33,6 +33,16 @@ class ApiSimulatorTests(unittest.TestCase):
         allowed = self.client.post("/relays/close", json={"signal": 3, "destination": 1, "actor": "automation"})
         self.assertEqual(allowed.status_code, 200)
 
+    def test_global_lock_endpoint_keeps_locks_independent(self):
+        response = self.client.put("/permissions/lock", json={"lock": "gui", "enabled": True})
+        self.assertEqual(response.status_code, 200)
+        response = self.client.put("/permissions/lock", json={"lock": "system", "enabled": True})
+        self.assertEqual(response.json()["gui_lock"], True)
+        self.assertEqual(response.json()["system_lock"], True)
+        response = self.client.put("/permissions/lock", json={"lock": "gui", "enabled": False})
+        self.assertEqual(response.json()["gui_lock"], False)
+        self.assertEqual(response.json()["system_lock"], True)
+
     def test_system_lock_blocks_automation_and_protection_is_non_mutating(self):
         before = list(self.transport.commands)
         response = self.client.put("/permissions/protection", json={"lines": [4, 5], "system": True})

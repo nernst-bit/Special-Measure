@@ -31,6 +31,20 @@ class ControllerPolicyTests(unittest.TestCase):
             with self.subTest(actor=actor), self.assertRaises(PermissionDeniedError):
                 service.set_relay(RelayAddress(1, 1), close=True, actor=actor)
 
+    def test_global_locks_are_independent(self):
+        service, _ = controller()
+        service.set_lock("gui", True)
+        service.set_lock("system", True)
+        self.assertTrue(service.snapshot().gui_lock)
+        self.assertTrue(service.snapshot().system_lock)
+        service.set_lock("gui", False)
+        self.assertFalse(service.snapshot().gui_lock)
+        self.assertTrue(service.snapshot().system_lock)
+        with self.assertRaises(PermissionDeniedError):
+            service.set_relay(RelayAddress(1, 1), close=True, actor=Actor.AUTOMATION)
+        service.set_lock("system", False)
+        service.set_relay(RelayAddress(1, 1), close=True, actor=Actor.AUTOMATION)
+
     def test_protection_is_permission_only_and_queries_remain_allowed(self):
         service, transport = controller()
         before = service.snapshot().state

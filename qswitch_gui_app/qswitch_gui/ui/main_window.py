@@ -16,8 +16,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
-    QListWidget,
-    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -47,11 +45,10 @@ class MainWindow(QMainWindow):
         self.client = QSwitchControllerClient(controller_url) if controller_url else None
         self.controller_connected = False
         self.controller_mode = "normal"
-        self.requested_mode = "normal"
-        self._mode_edit_pending = False
+        self.gui_lock = False
+        self.system_lock = False
         self.gui_protected: set[int] = set()
         self.system_protected: set[int] = set()
-        self._protection_edit_pending = {"gui": False, "system": False}
         self.device: QSwitchDevice | None = None
         self.state: RelayState | None = None
         self._busy = False
@@ -114,23 +111,16 @@ class MainWindow(QMainWindow):
 
         permissions = QGroupBox("Controller permissions and line protection")
         permissions_layout = QHBoxLayout(permissions)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Normal — GUI and automation allowed", "normal")
-        self.mode_combo.addItem("GUI/manual lock — automation still allowed", "gui_lock")
-        self.mode_combo.addItem("Global/system lock — all writes blocked", "system_lock")
-        self.apply_mode_button = QPushButton("Apply mode")
-        self.mode_combo.currentIndexChanged.connect(self._mode_selection_changed)
-        permissions_layout.addWidget(QLabel("Write mode:"))
-        permissions_layout.addWidget(self.mode_combo, 1)
-        permissions_layout.addWidget(self.apply_mode_button)
-        self.gui_lines = self._line_selector("GUI-only protected lines")
-        self.system_lines = self._line_selector("System-protected lines")
-        self.gui_lines[1].itemChanged.connect(lambda _item: self._protection_selection_changed("gui"))
-        self.system_lines[1].itemChanged.connect(lambda _item: self._protection_selection_changed("system"))
-        permissions_layout.addWidget(self.gui_lines[0])
-        permissions_layout.addWidget(self.system_lines[0])
-        self.apply_protection_button = QPushButton("Apply line protections")
-        permissions_layout.addWidget(self.apply_protection_button)
+        permissions_layout.addWidget(QLabel("Global safety:"))
+        self.gui_lock_button = QPushButton("GUI Lock")
+        self.gui_lock_button.setCheckable(True)
+        self.gui_lock_button.setToolTip("Toggle GUI/manual relay and reset operations; automation remains allowed")
+        self.system_lock_button = QPushButton("System Lock")
+        self.system_lock_button.setCheckable(True)
+        self.system_lock_button.setToolTip("Toggle all relay and reset operations for every client")
+        permissions_layout.addWidget(self.gui_lock_button)
+        permissions_layout.addWidget(self.system_lock_button)
+        permissions_layout.addWidget(QLabel("Line buttons: G = GUI/manual protection, S = system protection"), 1)
         root.addWidget(permissions)
 
         title_row = QHBoxLayout()
@@ -196,23 +186,10 @@ class MainWindow(QMainWindow):
         self.refresh_state_button.clicked.connect(self.refresh_state)
         self.reset_button.clicked.connect(self.confirm_reset)
         self.matrix.relay_clicked.connect(self.toggle_relay)
-        self.apply_mode_button.clicked.connect(self.apply_permission_mode)
-        self.apply_protection_button.clicked.connect(self.apply_line_protection)
+        self.matrix.protection_clicked.connect(self.toggle_protection)
+        self.gui_lock_button.clicked.connect(lambda checked: self.toggle_lock("gui", checked))
+        self.system_lock_button.clicked.connect(lambda checked: self.toggle_lock("system", checked))
         self._update_controls()
-
-    def _line_selector(self, title: str):
-        box = QGroupBox(title)
-        layout = QVBoxLayout(box)
-        widget = QListWidget()
-        widget.setMaximumHeight(82)
-        for line in range(1, 25):
-            item = QListWidgetItem(f"Signal {line}")
-            item.setData(Qt.ItemDataRole.UserRole, line)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            widget.addItem(item)
-        layout.addWidget(widget)
-        return box, widget
 
     def _apply_style(self) -> None:
         self.setStyleSheet(
@@ -221,6 +198,7 @@ class MainWindow(QMainWindow):
             QGroupBox { font-weight: 600; border: 1px solid #c6cdd4; border-radius: 5px; margin-top: 8px; padding-top: 9px; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }
             QPushButton { min-height: 28px; padding: 2px 12px; }
+            QPushButton[lockActive="true"], QToolButton[protectionActive="true"] { color: #ffffff; background: #a35400; border: 2px solid #713900; font-weight: 800; }
             #simulationBanner { color: #5b2600; background: #ffd58a; border: 2px solid #d16b00; font-weight: 800; }
             #connectionBadge { color: white; background: #5b6670; border-radius: 4px; padding: 5px 10px; font-weight: 700; }
             #matrixTitle { font-size: 14px; font-weight: 700; }
@@ -479,6 +457,23 @@ class MainWindow(QMainWindow):
         self._set_busy(False, title)
         self._show_error(title, exc)
 
+    def _permission_operation_failed(self, title: str, exc: Exception) -> None:
+        if self.client is None or not self.controller_connected:
+            self._set_busy(False, title)
+            self._show_error(title, exc)
+            return
+
+        def recovered(snapshot):
+            self._apply_snapshot(snapshot)
+            self._set_busy(False, title)
+            self._show_error(title, exc)
+
+        def recovery_failed(recovery_exc):
+            self._set_busy(False, title)
+            self._show_error(title, recovery_exc)
+
+        self._run(self.client.state, recovered, recovery_failed)
+
     def _apply_confirmed_state(self, state: RelayState) -> None:
         self.state = state
         self.matrix.show_state(state, enabled=not self._busy)
@@ -486,19 +481,13 @@ class MainWindow(QMainWindow):
 
     def _apply_snapshot(self, snapshot: dict) -> None:
         self.controller_mode = snapshot.get("mode", "normal")
-        applied_gui_protected = set(snapshot.get("gui_protected", []))
-        applied_system_protected = set(snapshot.get("system_protected", []))
-        self.gui_protected = applied_gui_protected
-        self.system_protected = applied_system_protected
-        if not self._protection_edit_pending["gui"]:
-            self._set_line_checks(self.gui_lines[1], applied_gui_protected)
-        if not self._protection_edit_pending["system"]:
-            self._set_line_checks(self.system_lines[1], applied_system_protected)
-        if not self._mode_edit_pending:
-            self.requested_mode = self.controller_mode
-            mode_index = self.mode_combo.findData(self.controller_mode)
-            if mode_index >= 0:
-                self.mode_combo.setCurrentIndex(mode_index)
+        self.gui_lock = bool(snapshot.get("gui_lock", self.controller_mode == "gui_lock"))
+        self.system_lock = bool(snapshot.get("system_lock", self.controller_mode == "system_lock"))
+        self.gui_protected = set(snapshot.get("gui_protected", []))
+        self.system_protected = set(snapshot.get("system_protected", []))
+        self._set_lock_button_state(self.gui_lock_button, self.gui_lock)
+        self._set_lock_button_state(self.system_lock_button, self.system_lock)
+        self.matrix.set_protection_state(self.gui_protected, self.system_protected)
         raw_state = snapshot.get("state")
         self.state = None if raw_state is None else RelayState(RelayAddress(int(item.split("!")[0]), int(item.split("!")[1])) for item in raw_state)
         if self.state is None:
@@ -507,58 +496,50 @@ class MainWindow(QMainWindow):
         else:
             self.matrix.show_state(self.state, enabled=not self._busy and self.controller_mode == "normal", gui_protected=self.gui_protected, system_protected=self.system_protected)
             self.breakout_label.setText(f"Breakout relays: {self.state.breakout_count} / {BREAKOUT_RELAY_LIMIT}")
-        self.permission_label.setText(f"Permissions: {snapshot.get('mode', 'unknown').replace('_', ' ').upper()}")
+        active_locks = [name for name, active in (("GUI LOCK", self.gui_lock), ("SYSTEM LOCK", self.system_lock)) if active]
+        self.permission_label.setText(f"Permissions: {', '.join(active_locks) if active_locks else 'NORMAL'}")
         self._update_reset_explanation()
 
-    def _mode_selection_changed(self, _index: int) -> None:
-        requested_mode = self.mode_combo.currentData()
-        if requested_mode is None:
-            return
-        self.requested_mode = requested_mode
-        self._mode_edit_pending = requested_mode != self.controller_mode
+    def _set_lock_button_state(self, button: QPushButton, active: bool) -> None:
+        button.setChecked(active)
+        button.setProperty("lockActive", active)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
-    def _protection_selection_changed(self, kind: str) -> None:
-        self._protection_edit_pending[kind] = True
-
-    def _set_line_checks(self, widget: QListWidget, lines: set[int]) -> None:
-        widget.blockSignals(True)
-        for index in range(widget.count()):
-            item = widget.item(index)
-            item.setCheckState(Qt.CheckState.Checked if item.data(Qt.ItemDataRole.UserRole) in lines else Qt.CheckState.Unchecked)
-        widget.blockSignals(False)
-
-    def _checked_lines(self, widget: QListWidget) -> list[int]:
-        return [widget.item(index).data(Qt.ItemDataRole.UserRole) for index in range(widget.count()) if widget.item(index).checkState() == Qt.CheckState.Checked]
-
-    def apply_permission_mode(self) -> None:
+    def toggle_lock(self, lock: str, enabled: bool) -> None:
         if self.client is None or not self.controller_connected or self._busy:
             return
-        mode = self.requested_mode
-        self._set_busy(True, f"Applying controller mode: {mode}…")
+        self._set_busy(True, f"Changing {'GUI' if lock == 'gui' else 'system'} lock…")
 
         def applied(snapshot):
-            self._mode_edit_pending = False
             self._apply_snapshot(snapshot)
-            self._set_busy(False, "Controller mode applied")
+            self._set_busy(False, "Lock state confirmed by controller")
 
-        self._run(lambda: self.client.set_mode(mode), applied, partial(self._operation_failed, "Could not apply controller mode"))
+        self._run(
+            lambda: self.client.set_lock(lock, enabled),
+            applied,
+            partial(self._permission_operation_failed, "Could not change lock state"),
+        )
 
-    def apply_line_protection(self) -> None:
+    def toggle_protection(self, line: int, system: bool) -> None:
         if self.client is None or not self.controller_connected or self._busy:
             return
-        gui_lines = self._checked_lines(self.gui_lines[1])
-        system_lines = self._checked_lines(self.system_lines[1])
-        self._set_busy(True, "Applying line protections; relay state will not change…")
-        def apply():
-            self.client.set_protection(gui_lines, system=False)
-            return self.client.set_protection(system_lines, system=True)
-        def applied(snapshot):
-            self._protection_edit_pending["gui"] = False
-            self._protection_edit_pending["system"] = False
-            self._apply_snapshot(snapshot)
-            self._set_busy(False, "Line protections applied; relay state unchanged")
+        protected = set(self.system_protected if system else self.gui_protected)
+        if line in protected:
+            protected.remove(line)
+        else:
+            protected.add(line)
+        self._set_busy(True, f"Changing {'system' if system else 'GUI/manual'} protection for Signal {line}…")
 
-        self._run(apply, applied, partial(self._operation_failed, "Could not apply line protections"))
+        def applied(snapshot):
+            self._apply_snapshot(snapshot)
+            self._set_busy(False, "Line protection state confirmed by controller")
+
+        self._run(
+            lambda: self.client.set_protection(sorted(protected), system=system),
+            applied,
+            partial(self._permission_operation_failed, "Could not change line protection"),
+        )
 
     def _update_reset_explanation(self) -> None:
         blocked_reason = self._reset_block_reason()
@@ -601,11 +582,9 @@ class MainWindow(QMainWindow):
             manual_allowed = self.controller_mode == "normal"
             self.reset_button.setEnabled(self.controller_connected and not self._busy and manual_allowed and self._reset_block_reason() is None)
             self.matrix.set_controls_enabled(self.controller_connected and self.state is not None and not self._busy and manual_allowed)
-            self.mode_combo.setEnabled(self.controller_connected and not self._busy)
-            self.apply_mode_button.setEnabled(self.controller_connected and not self._busy)
-            self.gui_lines[1].setEnabled(self.controller_connected and not self._busy)
-            self.system_lines[1].setEnabled(self.controller_connected and not self._busy)
-            self.apply_protection_button.setEnabled(self.controller_connected and not self._busy)
+            self.gui_lock_button.setEnabled(self.controller_connected and not self._busy)
+            self.system_lock_button.setEnabled(self.controller_connected and not self._busy)
+            self.matrix.set_protection_controls_enabled(self.controller_connected and not self._busy)
             if self.controller_connected and not self.refresh_timer.isActive():
                 self.refresh_timer.start(self.refresh_interval.value())
             elif not self.controller_connected:
@@ -620,11 +599,9 @@ class MainWindow(QMainWindow):
         self.refresh_state_button.setEnabled(connected and not self._busy and not self._refresh_in_flight)
         self.reset_button.setEnabled(connected and not self._busy and self._reset_block_reason() is None)
         self.matrix.set_controls_enabled(state_ready)
-        self.mode_combo.setEnabled(False)
-        self.apply_mode_button.setEnabled(False)
-        self.gui_lines[1].setEnabled(False)
-        self.system_lines[1].setEnabled(False)
-        self.apply_protection_button.setEnabled(False)
+        self.gui_lock_button.setEnabled(False)
+        self.system_lock_button.setEnabled(False)
+        self.matrix.set_protection_controls_enabled(False)
         if connected and not self.refresh_timer.isActive():
             self.refresh_timer.start(self.refresh_interval.value())
         elif not connected:
