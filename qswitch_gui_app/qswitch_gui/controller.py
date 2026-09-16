@@ -81,9 +81,19 @@ class QSwitchController:
             target.update(normalized)
 
     def set_relay(self, address: RelayAddress, *, close: bool, actor: Actor) -> RelayState:
+        return self.set_relays([address], close=close, actor=actor)
+
+    def set_relays(self, addresses: list[RelayAddress], *, close: bool, actor: Actor) -> RelayState:
         with self._lock:
-            self._authorize(address.signal, actor)
-            return self.device.set_relay(address, close)
+            if not addresses:
+                raise ValueError("at least one relay address is required")
+            if len(set(addresses)) != len(addresses):
+                raise ValueError("relay addresses must be unique within one operation")
+            # Authorize every line before delegating to the device, so a later
+            # protected/locked address cannot produce a partial hardware write.
+            for address in addresses:
+                self._authorize(address.signal, actor)
+            return self.device.set_relays(addresses, close)
 
     def reset(self, *, actor: Actor) -> RelayState:
         with self._lock:

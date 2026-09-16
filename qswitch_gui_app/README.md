@@ -94,11 +94,14 @@ The small HTTP API is served on `http://127.0.0.1:8765` by default:
 - `GET /health`, `GET /state`, `GET /identity`, `GET /error`
 - `POST /state/refresh`
 - `POST /relays/open` and `/relays/close` with `{"signal": 1, "destination": 3, "actor": "automation"}`
+- `POST /relays/batch/open` and `/relays/batch/close` with `{"relays": [{"signal": 1, "destination": 3}, ...], "actor": "automation"}`; this is one serialized, verified multi-relay operation.
 - `POST /reset` with `{"actor": "automation"}`
 - `PUT /permissions/mode` with `{"mode": "normal"|"gui_lock"|"system_lock"}`
 - `PUT /permissions/protection` with `{"lines": [1, 2], "system": false|true}`
 
 `gui_lock` blocks GUI writes but permits automation. `system_lock` blocks all writes. GUI-only line protection blocks GUI writes to selected lines; system line protection blocks both actors. Protection changes do not move relays. RESET is conservative: it is blocked by system protection, and manual RESET is also blocked by GUI protection or GUI lock.
+
+The GUI's **Controller permissions and line protection** panel changes all of these settings directly. Select Normal, GUI/manual lock, or Global/system lock, then apply. The two separate line lists allow multiple GUI-only or system-protected signal lines to be selected, changed, or cleared without changing relay state. The matrix continues read-only refresh while locked.
 
 ## Special Measure
 

@@ -40,11 +40,13 @@ end
                 any(addresses(:,1) < 1 | addresses(:,1) > 24) || any(addresses(:,2) < 0 | addresses(:,2) > 9)
             error('smcQSwitch:InvalidRelayAddress', 'Signal lines must be integers 1..24 and destinations 0..9.');
         end
-        response = [];
+        relays = cell(size(addresses, 1), 1);
         for n = 1:size(addresses,1)
-            payload = struct('signal', addresses(n,1), 'destination', addresses(n,2), 'actor', 'automation');
-            response = webwrite([base '/relays/' action], payload, opts); %#ok<AGROW>
+            relays{n} = struct('signal', addresses(n,1), 'destination', addresses(n,2));
         end
+        payload = struct('relays', {relays}, 'actor', 'automation');
+        % One HTTP request represents one serialized controller operation.
+        response = webwrite([base '/relays/batch/' action], payload, opts);
     end
 
     function text = state_text(entries)

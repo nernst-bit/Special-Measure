@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from qswitch_gui.controller import Actor, PermissionMode, QSwitchController
 from qswitch_gui.model import RelayAddress
 
@@ -26,6 +24,10 @@ def create_app(controller: QSwitchController):
     class RelayRequest(BaseModel):
         signal: int
         destination: int
+        actor: Actor = Actor.AUTOMATION
+
+    class BatchRelayRequest(BaseModel):
+        relays: list[RelayRequest]
         actor: Actor = Actor.AUTOMATION
 
     class ProtectionRequest(BaseModel):
@@ -74,6 +76,14 @@ def create_app(controller: QSwitchController):
     def close_relay(request: RelayRequest):
         return call(lambda: _relay_response(controller, request, True))
 
+    @app.post("/relays/batch/open")
+    def open_batch(request: BatchRelayRequest):
+        return call(lambda: _batch_relay_response(controller, request, False))
+
+    @app.post("/relays/batch/close")
+    def close_batch(request: BatchRelayRequest):
+        return call(lambda: _batch_relay_response(controller, request, True))
+
     @app.post("/reset")
     def reset(request: ResetRequest):
         return call(lambda: (controller.reset(actor=request.actor), snapshot_dict(controller))[1])
@@ -93,6 +103,13 @@ def create_app(controller: QSwitchController):
 def _relay_response(controller, request, close):
     address = RelayAddress(request.signal, request.destination)
     controller.set_relay(address, close=close, actor=request.actor)
+    return snapshot_dict(controller)
+
+
+def _batch_relay_response(controller, request, close):
+    addresses = [RelayAddress(item.signal, item.destination) for item in request.relays]
+    actor = request.actor
+    controller.set_relays(addresses, close=close, actor=actor)
     return snapshot_dict(controller)
 
 

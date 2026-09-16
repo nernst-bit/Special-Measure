@@ -80,27 +80,43 @@ class QSwitchDevice:
         return self.transport.query_line("SYST:ERR:ALL?").strip()
 
     def set_relay(self, address: RelayAddress, close: bool) -> RelayState:
+        return self.set_relays([address], close)
+
+    def set_relays(self, addresses: list[RelayAddress], close: bool) -> RelayState:
+        """Apply one validated multi-relay command and verify every address."""
         self._require_known_state()
-        if close and address.is_bnc:
+        if not addresses:
+            raise ValueError("at least one relay address is required")
+        if len(set(addresses)) != len(addresses):
+            raise ValueError("relay addresses must be unique within one operation")
+        if close and any(address.is_bnc for address in addresses):
             # Re-read immediately before a safety-limited BNC close. The USB
             # port is exclusive, but the manual permits simultaneous LAN control.
             current = self.refresh_state()
-            prospective = current.after_closing(address)
+            prospective = current
+            for address in addresses:
+                prospective = prospective.after_closing(address)
             if prospective.breakout_count > BREAKOUT_RELAY_LIMIT:
                 raise BreakoutLimitError(
-                    f"Closing {address.scpi} would exceed the 40 closed BNC-relay limit."
+                    f"Closing this request would exceed the {BREAKOUT_RELAY_LIMIT} closed BNC-relay limit."
                 )
         command = "CLOSE" if close else "OPEN"
-        self._write_and_synchronize(f"{command} {format_channel_list([address])}")
+        command_text = f"{command} {format_channel_list(addresses)}"
+        if len(command_text) > 127:
+            raise QSwitchError(
+                f"QSwitch command is {len(command_text)} characters; the maximum is 127 (terminator excluded)."
+            )
+        self._write_and_synchronize(command_text)
         try:
             state = self.refresh_state()
         except Exception:
             self.confirmed_state = None
             raise
-        if state.is_closed(address) != close:
+        mismatched = [address.scpi for address in addresses if state.is_closed(address) != close]
+        if mismatched:
             action = "closed" if close else "opened"
             raise StateVerificationError(
-                f"QSwitch did not verify {address.scpi} as {action}; displayed state is the actual reply."
+                f"QSwitch did not verify {', '.join(mismatched)} as {action}; displayed state is the actual reply."
             )
         return state
 
