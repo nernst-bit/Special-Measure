@@ -6,6 +6,16 @@ The GUI remains an individual package. The current hardware transport is USB ser
 
 The application is intended for the Wang Lab Windows 11 computer. Development and the explicit simulator also work on macOS.
 
+## Application configuration
+
+The canonical application configuration is `qswitch_gui/default.ini`. It contains only deployment settings:
+
+- `[MainGUI] refresh_interval_ms` controls read-only GUI polling.
+- `[Global.Controller] controller_url` identifies the localhost controller and supplies the default API port.
+- `[Global.QSwitch] serial_port` selects the physical serial port. It is intentionally empty by default; set it per machine or pass `--port`.
+
+Explicit command-line values override the INI values: `--controller-url` overrides `controller_url`, `--port` overrides `serial_port`, and `--api-port` overrides the port derived from `controller_url`. `--demo` is an explicit simulator choice and is not stored in the INI. Protocol constants, safety limits, permissions, and live hardware state remain fixed or runtime-owned rather than configurable.
+
 ## Safety and device behavior
 
 The device-specific behavior follows *QSwitch User Manual D22019-B00 (2025-03-21), firmware 2.0*:
@@ -37,6 +47,8 @@ Start the one controller (replace `COM4` with the actual port):
 ```bash
 python -m qswitch_gui.service --port COM4
 ```
+
+The controller can instead use the `serial_port` value from `qswitch_gui/default.ini`. An empty value without `--port` fails clearly; it never guesses a COM port. The controller API binds to `127.0.0.1`; its default port is taken from `controller_url` unless `--api-port` is supplied.
 
 Start the GUI in another terminal:
 
@@ -106,7 +118,7 @@ The GUI's **Controller permissions and line protection** panel changes these set
 
 ## Special Measure
 
-The generator `instruments/create_sminst_QSwitch.m` creates the controller-backed instrument and includes the required `inst.datadim = zeros(6,1)` field. In MATLAB, start the Python controller, run `ind = smloadinst('QSwitch', [], 'none')`, then use the existing six selector channels through the normal Special Measure driver. Set `inst.data.controller_url` in the generated definition if the controller is not local. The MATLAB driver hides HTTP transport and waits for each controller response before the experiment continues.
+The generator `instruments/create_sminst_QSwitch.m` creates the controller-backed instrument and includes the required `inst.datadim = zeros(6,1)` field. It reads the normal controller URL from `qswitch_gui/default.ini` when generating `inst.data.controller_url`; a deployed configuration path can be passed as the generator's optional second argument. In MATLAB, start the Python controller, run `ind = smloadinst('QSwitch', [], 'none')`, then use the existing six selector channels through the normal Special Measure driver. The MATLAB driver preserves `inst.data.controller_url`, hides HTTP transport, and waits for each controller response before the experiment continues.
 
 ## Tests
 

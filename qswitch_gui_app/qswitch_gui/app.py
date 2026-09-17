@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from qswitch_gui.config import load_config
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Wang Lab QSwitch USB controller")
@@ -13,14 +15,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--controller-url",
-        default="http://127.0.0.1:8765",
-        help="central controller URL (the default normal architecture)",
+        default=None,
+        help="central controller URL (overrides default.ini)",
     )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    config = load_config()
     from PySide6.QtWidgets import QApplication
 
     from qswitch_gui.ui import MainWindow
@@ -30,7 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     application.setOrganizationName("Wang Lab, UIUC")
     # --demo is an explicit no-hardware developer simulator. Normal operation
     # always uses the central controller client.
-    window = MainWindow(demo=args.demo, controller_url=None if args.demo else args.controller_url)
+    window = MainWindow(
+        demo=args.demo,
+        controller_url=None if args.demo else (args.controller_url or config.controller_url),
+        refresh_interval_ms=config.refresh_interval_ms,
+    )
     window.show()
     return application.exec()
 

@@ -29,6 +29,7 @@ from qswitch_gui.device import (
     enumerate_serial_ports,
 )
 from qswitch_gui.client import QSwitchControllerClient
+from qswitch_gui.config import load_config
 from qswitch_gui.model import BREAKOUT_RELAY_LIMIT, RelayAddress, RelayState
 
 from .routing_matrix import RoutingMatrix
@@ -38,11 +39,12 @@ from .worker import Worker
 class MainWindow(QMainWindow):
     protocol_line = Signal(str, str)
 
-    def __init__(self, demo: bool = False, controller_url: str | None = None) -> None:
+    def __init__(self, demo: bool = False, controller_url: str | None = None, refresh_interval_ms: int | None = None) -> None:
         super().__init__()
         self.demo = demo
         self.controller_url = controller_url
         self.client = QSwitchControllerClient(controller_url) if controller_url else None
+        self.refresh_interval_ms = load_config().refresh_interval_ms if refresh_interval_ms is None else refresh_interval_ms
         self.controller_connected = False
         self.controller_mode = "normal"
         self.gui_lock = False
@@ -148,7 +150,7 @@ class MainWindow(QMainWindow):
         self.refresh_interval = QSpinBox()
         self.refresh_interval.setRange(500, 60000)
         self.refresh_interval.setSingleStep(500)
-        self.refresh_interval.setValue(2000)
+        self.refresh_interval.setValue(self.refresh_interval_ms)
         self.refresh_interval.setSuffix(" ms")
         self.refresh_interval.setToolTip("Read-only state polling interval; polling never sends relay commands")
         self.refresh_interval.valueChanged.connect(self._refresh_interval_changed)

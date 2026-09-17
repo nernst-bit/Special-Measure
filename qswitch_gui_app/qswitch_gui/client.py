@@ -4,12 +4,14 @@ import json
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from qswitch_gui.config import load_config
+
 
 class QSwitchControllerClient:
     """Small standard-library client used by the GUI and MATLAB-facing helpers."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8765", timeout: float = 5.0):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str | None = None, timeout: float = 5.0):
+        self.base_url = (load_config().controller_url if base_url is None else base_url).rstrip("/")
         self.timeout = timeout
 
     def request(self, path: str, method: str = "GET", payload: dict | None = None) -> dict:
