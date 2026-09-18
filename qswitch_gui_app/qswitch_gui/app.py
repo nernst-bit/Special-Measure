@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--controller-url",
         default=None,
-        help="central controller URL (overrides default.ini)",
+        help="central controller URL (overrides config.ini)",
     )
     return parser
 

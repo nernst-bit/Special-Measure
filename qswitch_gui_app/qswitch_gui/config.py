@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("default.ini")
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.ini")
 MIN_REFRESH_INTERVAL_MS = 500
 MAX_REFRESH_INTERVAL_MS = 60000
 

@@ -5,7 +5,7 @@ function outputFile = create_sminst_QSwitch(outputFile, configFile)
 %   create_sminst_QSwitch
 % Start the Python controller first, then load this instrument with:
 %   ind = smloadinst('QSwitch', [], 'none');
-% The default controller URL is read from qswitch_gui/default.ini. Pass a
+% The default controller URL is read from qswitch_gui/config.ini. Pass a
 % second argument to use a deployed copy of that configuration file.
 % The command selectors are not ordinary smset/smget channels because those
 % APIs expect scalar/vector values, not an N-by-2 relay-address matrix.
@@ -20,7 +20,7 @@ if nargin < 1 || isempty(outputFile)
 end
 if nargin < 2 || isempty(configFile)
     repoRoot = fileparts(fileparts(mfilename('fullpath')));
-    configFile = fullfile(repoRoot, 'qswitch_gui_app', 'qswitch_gui', 'default.ini');
+    configFile = fullfile(repoRoot, 'qswitch_gui_app', 'qswitch_gui', 'config.ini');
 end
 controllerUrl = read_controller_url(configFile);
 

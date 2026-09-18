@@ -6,13 +6,14 @@ from qswitch_gui.api import create_app
 from qswitch_gui.config import QSwitchConfig, load_config
 from qswitch_gui.controller import QSwitchController
 from qswitch_gui.device import FakeSerialTransport, QSwitchDevice, SerialTransport
+from qswitch_gui.event_log import EventLog
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Single-owner localhost QSwitch controller service")
-    parser.add_argument("--port", help="QSwitch serial port, for example COM4 (overrides default.ini)")
+    parser.add_argument("--port", help="QSwitch serial port, for example COM4 (overrides config.ini)")
     parser.add_argument("--demo", action="store_true", help="serve the stateful simulator instead of hardware")
-    parser.add_argument("--api-port", type=int, help="controller API port (overrides the port in default.ini)")
+    parser.add_argument("--api-port", type=int, help="controller API port (overrides the port in config.ini)")
     return parser
 
 
@@ -35,7 +36,7 @@ def main(argv=None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     transport = FakeSerialTransport() if args.demo else SerialTransport(serial_port)
-    controller = QSwitchController(QSwitchDevice(transport))
+    controller = QSwitchController(QSwitchDevice(transport), event_log=EventLog())
     controller.connect()
     try:
         import uvicorn

@@ -8,13 +8,15 @@ The application is intended for the Wang Lab Windows 11 computer. Development an
 
 ## Application configuration
 
-The canonical application configuration is `qswitch_gui/default.ini`. It contains only deployment settings:
+The canonical application configuration is `qswitch_gui/config.ini`. It contains only deployment settings:
 
 - `[MainGUI] refresh_interval_ms` controls read-only GUI polling.
 - `[Global.Controller] controller_url` identifies the localhost controller and supplies the default API port.
 - `[Global.QSwitch] serial_port` selects the physical serial port. It is intentionally empty by default; set it per machine or pass `--port`.
 
 Explicit command-line values override the INI values: `--controller-url` overrides `controller_url`, `--port` overrides `serial_port`, and `--api-port` overrides the port derived from `controller_url`. `--demo` is an explicit simulator choice and is not stored in the INI. Protocol constants, safety limits, permissions, and live hardware state remain fixed or runtime-owned rather than configurable.
+
+The controller also appends a durable audit log at `%LOCALAPPDATA%\WangLab\QSwitch\events.jsonl` on Windows, `~/Library/Application Support/WangLab/QSwitch/events.jsonl` on macOS, or `$XDG_STATE_HOME/wanglab-qswitch/events.jsonl` (falling back to `~/.local/state/wanglab-qswitch/events.jsonl`) on Linux. Each line is one JSON event for a confirmed relay operation, RESET, lock/protection change, or a rejected state-changing request. Read-only polling is not logged. The controller flushes and synchronizes each record; if an audit record cannot be saved, the API reports an error rather than silently claiming that the operation was recorded.
 
 ## Safety and device behavior
 
@@ -48,7 +50,7 @@ Start the one controller (replace `COM4` with the actual port):
 python -m qswitch_gui.service --port COM4
 ```
 
-The controller can instead use the `serial_port` value from `qswitch_gui/default.ini`. An empty value without `--port` fails clearly; it never guesses a COM port. The controller API binds to `127.0.0.1`; its default port is taken from `controller_url` unless `--api-port` is supplied.
+The controller can instead use the `serial_port` value from `qswitch_gui/config.ini`. An empty value without `--port` fails clearly; it never guesses a COM port. The controller API binds to `127.0.0.1`; its default port is taken from `controller_url` unless `--api-port` is supplied.
 
 Start the GUI in another terminal:
 
@@ -118,7 +120,7 @@ The GUI's **Controller permissions and line protection** panel changes these set
 
 ## Special Measure
 
-The generator `instruments/create_sminst_QSwitch.m` creates the controller-backed instrument and includes the required `inst.datadim = zeros(6,1)` field. It reads the normal controller URL from `qswitch_gui/default.ini` when generating `inst.data.controller_url`; a deployed configuration path can be passed as the generator's optional second argument. In MATLAB, start the Python controller, run `ind = smloadinst('QSwitch', [], 'none')`, then use the existing six selector channels through the normal Special Measure driver. The MATLAB driver preserves `inst.data.controller_url`, hides HTTP transport, and waits for each controller response before the experiment continues.
+The generator `instruments/create_sminst_QSwitch.m` creates the controller-backed instrument and includes the required `inst.datadim = zeros(6,1)` field. It reads the normal controller URL from `qswitch_gui/config.ini` when generating `inst.data.controller_url`; a deployed configuration path can be passed as the generator's optional second argument. In MATLAB, start the Python controller, run `ind = smloadinst('QSwitch', [], 'none')`, then use the existing six selector channels through the normal Special Measure driver. The MATLAB driver preserves `inst.data.controller_url`, hides HTTP transport, and waits for each controller response before the experiment continues.
 
 ## Tests
 

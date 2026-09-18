@@ -24,7 +24,7 @@ qswitch-gui = "qswitch_gui.app:main"
 include = ["qswitch_gui*"]
 
 [tool.setuptools.package-data]
-qswitch_gui = ["default.ini"]
+qswitch_gui = ["config.ini"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

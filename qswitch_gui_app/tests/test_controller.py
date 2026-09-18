@@ -1,15 +1,18 @@
 import threading
+import tempfile
 import unittest
+from pathlib import Path
 
 from qswitch_gui.controller import Actor, PermissionDeniedError, PermissionMode, QSwitchController
 from qswitch_gui.device import BreakoutLimitError, FakeSerialTransport, QSwitchDevice, StateVerificationError
+from qswitch_gui.event_log import EventLog
 from qswitch_gui.model import RelayAddress, RelayState
 
 
 def controller():
     transport = FakeSerialTransport()
     device = QSwitchDevice(transport)
-    service = QSwitchController(device)
+    service = QSwitchController(device, event_log=EventLog(Path(tempfile.mkdtemp()) / "events.jsonl"))
     service.connect()
     return service, transport
 
@@ -129,7 +132,10 @@ class ControllerPolicyTests(unittest.TestCase):
     def test_batch_bnc_limit_rejection_has_no_hardware_write(self):
         existing = [RelayAddress(signal, 1) for signal in range(1, 21)] + [RelayAddress(signal, 2) for signal in range(1, 21)]
         transport = FakeSerialTransport(state=RelayState(existing))
-        service = QSwitchController(QSwitchDevice(transport))
+        service = QSwitchController(
+            QSwitchDevice(transport),
+            event_log=EventLog(Path(tempfile.mkdtemp()) / "events.jsonl"),
+        )
         service.connect()
         before = list(transport.commands)
         with self.assertRaises(BreakoutLimitError):

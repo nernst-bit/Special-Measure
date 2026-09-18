@@ -14,7 +14,7 @@ from qswitch_gui.service import build_parser as build_service_parser, resolve_se
 class ConfigurationTests(unittest.TestCase):
     def test_default_ini_loads_expected_values(self):
         config = load_config()
-        self.assertEqual(DEFAULT_CONFIG_PATH.name, "default.ini")
+        self.assertEqual(DEFAULT_CONFIG_PATH.name, "config.ini")
         self.assertEqual(config.controller_url, "http://127.0.0.1:8765")
         self.assertEqual(config.controller_port, 8765)
         self.assertEqual(config.serial_port, "")
@@ -61,7 +61,7 @@ class ConfigurationTests(unittest.TestCase):
         class TemporaryConfig:
             def __enter__(self):
                 self.directory = tempfile.TemporaryDirectory()
-                self.path = Path(self.directory.name) / "default.ini"
+                self.path = Path(self.directory.name) / "config.ini"
                 self.path.write_text(
                     "[MainGUI]\n"
                     f"refresh_interval_ms = {refresh_interval}\n\n"

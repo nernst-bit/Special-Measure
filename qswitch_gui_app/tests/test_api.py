@@ -1,16 +1,22 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from qswitch_gui.api import create_app
 from qswitch_gui.controller import QSwitchController
 from qswitch_gui.device import FakeSerialTransport, QSwitchDevice
+from qswitch_gui.event_log import EventLog
 
 
 class ApiSimulatorTests(unittest.TestCase):
     def setUp(self):
         self.transport = FakeSerialTransport()
-        self.controller = QSwitchController(QSwitchDevice(self.transport))
+        self.controller = QSwitchController(
+            QSwitchDevice(self.transport),
+            event_log=EventLog(Path(tempfile.mkdtemp()) / "events.jsonl"),
+        )
         self.controller.connect()
         self.client = TestClient(create_app(self.controller))
 
