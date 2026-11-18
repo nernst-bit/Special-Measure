@@ -331,7 +331,7 @@ function RunIncrement
 end
 
 function Run
-    global smaux
+    global smaux smdata
     while ~isempty(smaux.smq);
         %grab the next scan in the queue
         scan = smaux.smq{1};
@@ -354,7 +354,12 @@ function Run
             end
             
             scan = UpdateConstants(scan);
-            smrun(scan,datasaveFile);
+            qswitchIndex = find(strcmpi({smdata.inst.device}, 'QSwitch'), 1);
+            if isempty(qswitchIndex)
+                smrun(scan,datasaveFile);
+            else
+                withQSwitchScanOwnership(qswitchIndex,scan,datasaveFile);
+            end
             
             %save to powerpoint
             if get(smaux.sm.pptauto_cbh,'Value')
