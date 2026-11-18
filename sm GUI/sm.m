@@ -71,6 +71,7 @@ function sm_OpeningFcn(hObject, eventdata, handles, varargin)
 
 % Choose default command line output for sm
 handles.output = hObject;
+add_qswitch_preset_menu(hObject);
 
 % Update handles structure
 guidata(hObject, handles);
@@ -456,3 +457,127 @@ function editscan2_pbh_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 sm_Callback('EditScan2');
+
+function add_qswitch_preset_menu(hObject)
+% Add the saved-route controls without changing the GUIDE .fig layout.
+if ~isempty(findall(hObject, 'Tag', 'QSwitchPresetsMenu'))
+    return;
+end
+menu = uimenu(hObject, 'Label', 'QSwitch', 'Tag', 'QSwitchPresetsMenu');
+uimenu(menu, 'Label', 'Saved Routing Configurations...', ...
+    'Callback', @open_qswitch_preset_dialog);
+
+
+function open_qswitch_preset_dialog(~, ~)
+global smdata
+dialog = figure('Name', 'QSwitch Saved Configurations', 'NumberTitle', 'off', ...
+    'MenuBar', 'none', 'ToolBar', 'none', 'Resize', 'off', ...
+    'Units', 'pixels', 'Position', [100 100 540 170], ...
+    'Tag', 'QSwitchPresetDialog');
+movegui(dialog, 'center');
+uicontrol(dialog, 'Style', 'text', 'String', 'Saved routing configuration', ...
+    'HorizontalAlignment', 'left', 'Units', 'pixels', 'Position', [18 125 260 22]);
+popup = uicontrol(dialog, 'Style', 'popupmenu', 'String', {'(Loading...)'}, ...
+    'HorizontalAlignment', 'left', 'Units', 'pixels', 'Position', [18 92 315 30], ...
+    'Enable', 'off', 'Tag', 'QSwitchPresetNames');
+status = uicontrol(dialog, 'Style', 'text', 'String', '', ...
+    'HorizontalAlignment', 'left', 'Units', 'pixels', 'Position', [18 18 505 52], ...
+    'Tag', 'QSwitchPresetStatus');
+applyButton = uicontrol(dialog, 'Style', 'pushbutton', 'String', 'Apply', ...
+    'Units', 'pixels', 'Position', [435 92 88 30], 'Enable', 'off', ...
+    'Callback', @(~, ~) apply_qswitch_preset(popup, status, qswitch_instrument_index()));
+refreshButton = uicontrol(dialog, 'Style', 'pushbutton', 'String', 'Refresh', ...
+    'Units', 'pixels', 'Position', [343 92 84 30], ...
+    'Callback', @(~, ~) refresh_qswitch_presets(popup, status, applyButton, qswitch_instrument_index()));
+
+index = qswitch_instrument_index();
+if isempty(index)
+    set(popup, 'String', {'(QSwitch instrument not loaded)'}, 'Value', 1, 'Enable', 'off');
+    set(applyButton, 'Enable', 'off');
+    set(refreshButton, 'Enable', 'off');
+    set(status, 'String', 'Load the QSwitch instrument in Special Measure to use saved configurations.');
+    return;
+end
+refresh_qswitch_presets(popup, status, applyButton, index);
+
+
+function index = qswitch_instrument_index()
+global smdata
+index = [];
+if isempty(smdata) || ~isfield(smdata, 'inst') || isempty(smdata.inst)
+    return;
+end
+for n = 1:numel(smdata.inst)
+    if isfield(smdata.inst(n), 'device') && strcmpi(smdata.inst(n).device, 'QSwitch')
+        index = n;
+        return;
+    end
+end
+
+
+function refresh_qswitch_presets(popup, status, applyButton, index)
+global smdata
+if isempty(index)
+    set(status, 'String', 'Load the QSwitch instrument in Special Measure to use saved configurations.');
+    set(applyButton, 'Enable', 'off');
+    return;
+end
+try
+    names = smdata.inst(index).cntrlfn([index 9 0], []);
+    if isstring(names), names = cellstr(names); end
+    if ischar(names), names = cellstr(names); end
+    if isempty(names)
+        set(popup, 'String', {'(No saved configurations)'}, 'Value', 1, 'Enable', 'off');
+        set(applyButton, 'Enable', 'off');
+        set(status, 'String', 'No saved configurations are available in the controller.');
+        return;
+    end
+    set(popup, 'String', names, 'Value', 1, 'Enable', 'on');
+    set(applyButton, 'Enable', 'on');
+    set(status, 'String', sprintf('Loaded %d configuration(s) from the QSwitch controller.', numel(names)));
+catch exception
+    set(popup, 'String', {'(Refresh failed)'}, 'Value', 1, 'Enable', 'off');
+    set(applyButton, 'Enable', 'off');
+    message = sprintf('Could not retrieve saved configurations: %s', exception.message);
+    set(status, 'String', message);
+    errordlg(message, 'QSwitch Configuration Refresh', 'modal');
+end
+
+
+function apply_qswitch_preset(popup, status, index)
+global smdata
+if isempty(index)
+    set(status, 'String', 'Load the QSwitch instrument before applying a configuration.');
+    return;
+end
+names = get(popup, 'String');
+if ischar(names), names = cellstr(names); end
+if isempty(names) || any(strcmp(names{1}, ...
+        {'(Loading...)', '(No saved configurations)', '(Refresh failed)', '(QSwitch instrument not loaded)'}))
+    set(status, 'String', 'Refresh the list and select a saved configuration first.');
+    return;
+end
+name = names{get(popup, 'Value')};
+try
+    withQSwitchOwnership(index, @(instrumentIndex) restore_qswitch_preset(instrumentIndex, name));
+    if isfield(smdata.inst(index).data, 'ownership_token') && ...
+            ~isempty(smdata.inst(index).data.ownership_token)
+        message = sprintf(['Configuration "%s" was restored, but ownership release failed. ' ...
+            'Routing may already have changed; inspect controller state and ownership before continuing.'], name);
+        set(status, 'String', message);
+        errordlg(message, 'QSwitch Ownership Release Failed', 'modal');
+        return;
+    end
+    message = sprintf('Configuration "%s" was restored successfully.', name);
+    set(status, 'String', message);
+    msgbox(message, 'QSwitch Configuration', 'modal');
+catch exception
+    message = sprintf('Configuration "%s" was not confirmed as fully restored: %s', name, exception.message);
+    set(status, 'String', message);
+    errordlg(message, 'QSwitch Configuration Apply Failed', 'modal');
+end
+
+
+function result = restore_qswitch_preset(index, name)
+global smdata
+result = smdata.inst(index).cntrlfn([index 10 1], name);
